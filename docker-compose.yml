@@ -1,0 +1,35 @@
+services:
+  mongo_db:
+    container_name: database_container
+    image: mongo:latest
+    restart: always
+    volumes:
+      - mongo_db:/data/db
+
+  redis:
+    container_name: redis_container
+    image: redis:latest
+    restart: always 
+    ports:
+      - 6379:6379
+
+  app:
+    build: .
+    ports:
+      - 3000:3000
+    environment:
+      PORT: "${PORT}"
+      MONGO_CONNECT : "${MONGO_CONNECT}"
+      PASSWORD_SALT: "${PASSWORD_SALT}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
+      SMTP_HOST: "${SMTP_HOST}"
+      SMTP_PORT: "${SMTP_PORT}"
+      SMTP_USER: "${SMTP_USER}"
+      SMTP_PASS: "${SMTP_PASS}"
+      SMTP_SERVICE: "${SMTP_SERVICE}"
+    depends_on:
+      - mongo_db
+      - redis
+
+volumes:
+  mongo_db: {}

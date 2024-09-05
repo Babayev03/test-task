@@ -2,6 +2,8 @@ import { Inject, Service } from "typedi";
 import { Models, Types } from "mongoose";
 import IReservation from "../interfaces/IReservation";
 import moment from "moment-timezone";
+import { sendMail } from "../utils/sendMail";
+import { RedisClientType } from "redis";
 
 @Service()
 export default class ReservationService {
@@ -9,7 +11,8 @@ export default class ReservationService {
     @Inject("userModel") private userModel: Models.UserModel,
     @Inject("venueModel") private venueModel: Models.VenueModel,
     @Inject("reservationModel")
-    private reservationModel: Models.ReservationModel
+    private reservationModel: Models.ReservationModel,
+    @Inject("redisClient") private redisClient: RedisClientType
   ) {}
 
   public async createReservation(
@@ -54,6 +57,11 @@ export default class ReservationService {
         numberOfPeople,
       });
 
+      sendMail(user.email);
+
+      await this.redisClient.del(`reservations_user_${userId}`);
+      await this.redisClient.del(`reservations_admin`);
+
       return reservation;
     } catch (error) {
       throw error;
@@ -69,7 +77,24 @@ export default class ReservationService {
         throw { status: 404, message: "userNotFound" };
       }
 
-      const reservations = await this.reservationModel.find({ user: userId });
+      const cacheKey =
+        user.role === "admin"
+          ? `reservations_admin`
+          : `reservations_user_${userId}`;
+      const cachedReservations = await this.redisClient.get(cacheKey);
+
+      if (cachedReservations) {
+        console.log("cachedReservations");
+        return JSON.parse(cachedReservations);
+      }
+
+      const reservations = await this.reservationModel.find(
+        user.role === "admin" ? {} : { user: userId }
+      );
+
+      await this.redisClient.set(cacheKey, JSON.stringify(reservations), {
+        EX: 60 * 60 * 24,
+      });
 
       return reservations;
     } catch (error) {
@@ -87,11 +112,22 @@ export default class ReservationService {
         throw { status: 404, message: "userNotFound" };
       }
 
+      const cacheKey = `reservation_${reservationId}`;
+      const cachedReservation = await this.redisClient.get(cacheKey);
+
+      if (cachedReservation) {
+        return JSON.parse(cachedReservation);
+      }
+
       const reservation = await this.findReservationByIdAndUser(
         reservationId,
         userId,
         user.role
       );
+
+      await this.redisClient.set(cacheKey, JSON.stringify(reservation), {
+        EX: 60 * 60 * 24,
+      });
 
       return reservation;
     } catch (error) {
@@ -116,6 +152,10 @@ export default class ReservationService {
       );
 
       await this.reservationModel.deleteOne({ _id: reservationId });
+
+      await this.redisClient.del(`reservations_user_${userId}`);
+      await this.redisClient.del(`reservations_admin`);
+      await this.redisClient.del(`reservation_${reservationId}`);
 
       return reservation;
     } catch (error) {

@@ -1,12 +1,14 @@
 import { Inject, Service } from "typedi";
 import { Models, Types } from "mongoose";
 import IVenue from "../interfaces/IVenue";
+import { RedisClientType } from "redis";
 
 @Service()
 export default class VenueService {
   constructor(
     @Inject("userModel") private userModel: Models.UserModel,
-    @Inject("venueModel") private venueModel: Models.VenueModel
+    @Inject("venueModel") private venueModel: Models.VenueModel,
+    @Inject("redisClient") private redisClient: RedisClientType
   ) {}
 
   public async createVenue(
@@ -29,6 +31,8 @@ export default class VenueService {
         description,
         createdBy: userId,
       });
+
+      await this.redisClient.del("all_venues");
 
       return venue;
     } catch (error) {
@@ -60,12 +64,25 @@ export default class VenueService {
 
   public async getVenueById(id: Types.ObjectId): Promise<IVenue> {
     try {
+      const cacheKey = `venue_${id}`;
+
+      const cachedVenue = await this.redisClient.get(cacheKey);
+
+      if (cachedVenue) {
+        return JSON.parse(cachedVenue);
+      }
+
       const venue = await this.venueModel
         .findById(id)
         .populate("createdBy", "email userName");
+
       if (!venue) {
         throw { status: 404, message: "venueNotFound" };
       }
+
+      await this.redisClient.set(cacheKey, JSON.stringify(venue), {
+        EX: 60 * 60 * 24,
+      });
 
       return venue;
     } catch (error) {
@@ -88,13 +105,15 @@ export default class VenueService {
       if (description !== undefined) updateData.description = description;
 
       const venue = await this.venueModel
-        .findByIdAndUpdate(id, updateData, {
-          new: true,
-        })
+        .findByIdAndUpdate(id, updateData, { new: true })
         .populate("createdBy", "email userName");
+
       if (!venue) {
         throw { status: 404, message: "venueNotFound" };
       }
+
+      await this.redisClient.del(`venue_${id}`);
+      await this.redisClient.del("all_venues");
 
       return venue;
     } catch (error) {
@@ -107,9 +126,13 @@ export default class VenueService {
       const venue = await this.venueModel
         .findByIdAndDelete(id)
         .populate("createdBy", "email userName");
+
       if (!venue) {
         throw { status: 404, message: "venueNotFound" };
       }
+
+      await this.redisClient.del(`venue_${id}`);
+      await this.redisClient.del("all_venues");
 
       return venue;
     } catch (error) {

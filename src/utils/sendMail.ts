@@ -1,22 +1,23 @@
 import nodemailer from "nodemailer";
+import config from "../config";
 
 const transporter = nodemailer.createTransport({
-  service: "gmail",
-  host: "smtp.gmail.com",
-  port: 465,
+  service: config.smtp_service,
+  host: config.smtp_host,
+  port: Number(config.smtp_port),
   secure: true,
   auth: {
     type: "login",
-    user: "YOUR_MAIL",
-    pass: "YOU_PASSWORD",
+    user: config.smtp_user,
+    pass: config.smtp_pass,
   },
 });
-export async function sendMail(otpCode: string, to: string) {
+export async function sendMail(to: string) {
   try {
     await transporter.sendMail({
-      from: "web-service",
+      from: "test-task",
       to: to,
-      subject: "OTP Code",
+      subject: "Sucessfully Created Reservation",
       html: `
       <!DOCTYPE HTML PUBLIC "-//W3C//DTD XHTML 1.0 Transitional //EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
@@ -194,7 +195,9 @@ table, td { color: #000000; } @media (max-width: 480px) { #u_content_text_5 .v-c
       <td class="v-container-padding-padding" style="overflow-wrap:break-word;word-break:break-word;padding:10px;font-family:'Montserrat',sans-serif;" align="left">
         
   <!--[if mso]><table width="100%"><tr><td><![endif]-->
-    <h1 style="margin: 0px; line-height: 140%; text-align: center; word-wrap: break-word; font-size: 22px; font-weight: 400;"><span><span>${otpCode}</span></span></h1>
+    <h1 style="margin: 0px; line-height: 140%; text-align: center; word-wrap: break-word; font-size: 22px; font-weight: 400;"><span><span>
+    Your Reservation sucessfully created  🎉
+    </span></span></h1>
   <!--[if mso]></td></tr></table><![endif]-->
 
       </td>

@@ -5,7 +5,7 @@
   "main": "src/app.ts",
   "scripts": {
     "start": "nodemon --exec ts-node --files src/app.ts",
-    "test": "jest"
+    "test": "jest --detectOpenHandles"
   },
   "keywords": [],
   "author": "Arishem",
@@ -21,8 +21,11 @@
     "moment-timezone": "^0.5.45",
     "mongoose": "^8.6.1",
     "nodemailer": "^6.9.15",
+    "redis": "^4.7.0",
     "reflect-metadata": "^0.1.14",
-    "typedi": "^0.10.0"
+    "typedi": "^0.10.0",
+    "winston": "^3.14.2",
+    "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
