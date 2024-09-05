@@ -11,7 +11,7 @@
 
 ## About
 
-This project is a powerful Express web service built using the TypeDI dependency injection framework in TypeScript. It offers a solid foundation for creating scalable and maintainable backend APIs with ease. Whether you're a seasoned developer or just starting out, This project provides a robust solution for building modern web applications.
+This project is a powerful Express web service built using the TypeDI dependency injection framework in TypeScript. This project provides a robust solution for building modern web applications.
 
 ## Features
 
@@ -26,7 +26,7 @@ This project is a powerful Express web service built using the TypeDI dependency
 To install Your Project Name, simply clone the repository and install the dependencies using npm or yarn:
 
 ```bash
-git clone https://github.com/Babayev03/express-typescript-typedi-service.git
+git clone https://github.com/Babayev03/test-task.git
 
 cd express-typescript-typedi-service
 
