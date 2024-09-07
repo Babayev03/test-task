@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: "20.x"
       - name: Install dependencies
-        run: yarn && yarn add typescript && yarn add ts-node
+        run: yarn && npm i -g typescript && npm i -g ts-node
       - name: Build
         run: yarn test && yarn start
       - name: Sucess
