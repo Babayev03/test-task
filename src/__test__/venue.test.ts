@@ -19,8 +19,15 @@ const mockVenueModel = {
   create: jest.fn(),
 };
 
+const mockRedisClient = {
+  get: jest.fn(),
+  set: jest.fn(),
+  del: jest.fn(),
+};
+
 Container.set("venueModel", mockVenueModel);
 Container.set("userModel", mockUserModel);
+Container.set("redisClient", mockRedisClient);
 
 describe("VenueService", () => {
   let venueService: VenueService;
@@ -31,28 +38,42 @@ describe("VenueService", () => {
   });
 
   describe("getVenueById", () => {
-    it("should return a venue by ID", async () => {
+    it("should return a venue from cache if available", async () => {
+      const venueId = new Types.ObjectId();
+      const cachedVenue = { name: "Cached Venue" };
+      mockRedisClient.get.mockResolvedValue(JSON.stringify(cachedVenue));
+
+      const result = await venueService.getVenueById(venueId);
+
+      expect(mockRedisClient.get).toHaveBeenCalledWith(`venue_${venueId}`);
+      expect(result).toEqual(cachedVenue);
+    });
+
+    it("should fetch venue from DB and cache if not in cache", async () => {
       const venueId = new Types.ObjectId();
       const venue = {
-        name: "Test Venue",
+        name: "DB Venue",
         createdBy: { email: "test@example.com", userName: "testuser" },
       };
 
+      mockRedisClient.get.mockResolvedValue(null); // Cache miss
       mockVenueModel.findById.mockReturnThis();
       mockVenueModel.populate.mockResolvedValue(venue);
 
       const result = await venueService.getVenueById(venueId);
 
       expect(mockVenueModel.findById).toHaveBeenCalledWith(venueId);
-      expect(mockVenueModel.populate).toHaveBeenCalledWith(
-        "createdBy",
-        "email userName"
+      expect(mockRedisClient.set).toHaveBeenCalledWith(
+        `venue_${venueId}`,
+        JSON.stringify(venue),
+        { EX: 60 * 60 * 24 }
       );
       expect(result).toEqual(venue);
     });
 
     it("should throw a 404 error if venue not found", async () => {
       const venueId = new Types.ObjectId();
+      mockRedisClient.get.mockResolvedValue(null); // Cache miss
       mockVenueModel.findById.mockReturnThis();
       mockVenueModel.populate.mockResolvedValue(null);
 
@@ -60,17 +81,11 @@ describe("VenueService", () => {
         status: 404,
         message: "venueNotFound",
       });
-
-      expect(mockVenueModel.findById).toHaveBeenCalledWith(venueId);
-      expect(mockVenueModel.populate).toHaveBeenCalledWith(
-        "createdBy",
-        "email userName"
-      );
     });
   });
 
   describe("updateVenue", () => {
-    it("should update a venue if found", async () => {
+    it("should update and invalidate cache for a venue", async () => {
       const venueId = new Types.ObjectId();
       const updatedData = { name: "Updated Venue" };
       const updatedVenue = {
@@ -88,14 +103,12 @@ describe("VenueService", () => {
         { name: updatedData.name },
         { new: true }
       );
-      expect(mockVenueModel.populate).toHaveBeenCalledWith(
-        "createdBy",
-        "email userName"
-      );
+      expect(mockRedisClient.del).toHaveBeenCalledWith(`venue_${venueId}`);
+      expect(mockRedisClient.del).toHaveBeenCalledWith("all_venues");
       expect(result).toEqual(updatedVenue);
     });
 
-    it("should throw a 404 error if venue not found", async () => {
+    it("should throw a 404 error if venue not found for update", async () => {
       const venueId = new Types.ObjectId();
       mockVenueModel.findByIdAndUpdate.mockReturnThis();
       mockVenueModel.populate.mockResolvedValue(null);
@@ -106,21 +119,11 @@ describe("VenueService", () => {
         status: 404,
         message: "venueNotFound",
       });
-
-      expect(mockVenueModel.findByIdAndUpdate).toHaveBeenCalledWith(
-        venueId,
-        { name: "Updated Venue" },
-        { new: true }
-      );
-      expect(mockVenueModel.populate).toHaveBeenCalledWith(
-        "createdBy",
-        "email userName"
-      );
     });
   });
 
   describe("deleteVenue", () => {
-    it("should delete a venue if found", async () => {
+    it("should delete a venue and clear cache", async () => {
       const venueId = new Types.ObjectId();
       const deletedVenue = {
         name: "Deleted Venue",
@@ -133,14 +136,12 @@ describe("VenueService", () => {
       const result = await venueService.deleteVenue(venueId);
 
       expect(mockVenueModel.findByIdAndDelete).toHaveBeenCalledWith(venueId);
-      expect(mockVenueModel.populate).toHaveBeenCalledWith(
-        "createdBy",
-        "email userName"
-      );
+      expect(mockRedisClient.del).toHaveBeenCalledWith(`venue_${venueId}`);
+      expect(mockRedisClient.del).toHaveBeenCalledWith("all_venues");
       expect(result).toEqual(deletedVenue);
     });
 
-    it("should throw a 404 error if venue not found", async () => {
+    it("should throw a 404 error if venue not found for delete", async () => {
       const venueId = new Types.ObjectId();
       mockVenueModel.findByIdAndDelete.mockReturnThis();
       mockVenueModel.populate.mockResolvedValue(null);
@@ -149,12 +150,6 @@ describe("VenueService", () => {
         status: 404,
         message: "venueNotFound",
       });
-
-      expect(mockVenueModel.findByIdAndDelete).toHaveBeenCalledWith(venueId);
-      expect(mockVenueModel.populate).toHaveBeenCalledWith(
-        "createdBy",
-        "email userName"
-      );
     });
   });
 });

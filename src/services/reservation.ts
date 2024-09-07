@@ -57,7 +57,7 @@ export default class ReservationService {
         numberOfPeople,
       });
 
-      sendMail(user.email);
+      await sendMail(user.email);
 
       await this.redisClient.del(`reservations_user_${userId}`);
       await this.redisClient.del(`reservations_admin`);
@@ -84,7 +84,6 @@ export default class ReservationService {
       const cachedReservations = await this.redisClient.get(cacheKey);
 
       if (cachedReservations) {
-        console.log("cachedReservations");
         return JSON.parse(cachedReservations);
       }
 

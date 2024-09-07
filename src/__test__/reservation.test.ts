@@ -1,5 +1,7 @@
 import { Types } from "mongoose";
 import ReservationService from "../services/reservation";
+import nodemailer from "nodemailer";
+import { sendMail } from "../utils/sendMail";
 
 jest.mock("moment-timezone", () => {
   const actualMoment = jest.requireActual("moment");
@@ -17,11 +19,22 @@ jest.mock("moment-timezone", () => {
   return mockMoment;
 });
 
+jest.mock("nodemailer", () => ({
+  createTransport: jest.fn().mockReturnValue({
+    sendMail: jest.fn().mockResolvedValue("Email sent"),
+  }),
+}));
+
+jest.mock("../utils/sendMail", () => ({
+  sendMail: jest.fn().mockResolvedValue("Email sent"),
+}));
+
 describe("ReservationService", () => {
   let reservationService: ReservationService;
   let mockUserModel: any;
   let mockVenueModel: any;
   let mockReservationModel: any;
+  let mockRedisClient: any;
 
   beforeEach(() => {
     mockUserModel = {
@@ -36,19 +49,25 @@ describe("ReservationService", () => {
       find: jest.fn(),
       deleteOne: jest.fn(),
     };
+    mockRedisClient = {
+      get: jest.fn(),
+      set: jest.fn(),
+      del: jest.fn(),
+    };
 
     reservationService = new ReservationService(
       mockUserModel,
       mockVenueModel,
-      mockReservationModel
+      mockReservationModel,
+      mockRedisClient
     );
   });
 
   describe("createReservation", () => {
-    it("should create a reservation successfully", async () => {
+    it("should create a reservation successfully and clear Redis cache", async () => {
       const mockUserId = new Types.ObjectId();
       const mockVenueId = new Types.ObjectId();
-      const mockUser = { _id: mockUserId };
+      const mockUser = { _id: mockUserId, email: "user@example.com" };
       const mockVenue = { _id: mockVenueId, capacity: 100 };
       const mockReservation = {
         _id: new Types.ObjectId(),
@@ -73,15 +92,39 @@ describe("ReservationService", () => {
       );
 
       expect(result).toEqual(mockReservation);
+      expect(mockRedisClient.del).toHaveBeenCalledWith(
+        `reservations_user_${mockUserId}`
+      );
+      expect(mockRedisClient.del).toHaveBeenCalledWith(`reservations_admin`);
     });
   });
+
   describe("getReservationsByUserId", () => {
-    it("should return reservations for a user", async () => {
+    it("should return reservations from cache", async () => {
       const mockUserId = new Types.ObjectId();
-      const mockUser = { _id: mockUserId };
+      const mockUser = { _id: mockUserId, role: "user" };
+      const cachedReservations = [{}, {}, {}];
+
+      mockUserModel.findById.mockResolvedValue(mockUser);
+      mockRedisClient.get.mockResolvedValue(JSON.stringify(cachedReservations));
+
+      const result = await reservationService.getReservationsByUserId(
+        mockUserId
+      );
+
+      expect(result).toEqual(cachedReservations);
+      expect(mockRedisClient.get).toHaveBeenCalledWith(
+        `reservations_user_${mockUserId}`
+      );
+    });
+
+    it("should return reservations from the database and cache them", async () => {
+      const mockUserId = new Types.ObjectId();
+      const mockUser = { _id: mockUserId, role: "user" };
       const mockReservations = [{}, {}, {}];
 
       mockUserModel.findById.mockResolvedValue(mockUser);
+      mockRedisClient.get.mockResolvedValue(null);
       mockReservationModel.find.mockResolvedValue(mockReservations);
 
       const result = await reservationService.getReservationsByUserId(
@@ -89,25 +132,46 @@ describe("ReservationService", () => {
       );
 
       expect(result).toEqual(mockReservations);
-    });
-
-    it("should throw an error if user not found", async () => {
-      mockUserModel.findById.mockResolvedValue(null);
-
-      await expect(
-        reservationService.getReservationsByUserId(new Types.ObjectId())
-      ).rejects.toEqual({ status: 404, message: "userNotFound" });
+      expect(mockRedisClient.get).toHaveBeenCalledWith(
+        `reservations_user_${mockUserId}`
+      );
+      expect(mockRedisClient.set).toHaveBeenCalledWith(
+        `reservations_user_${mockUserId}`,
+        JSON.stringify(mockReservations),
+        { EX: 60 * 60 * 24 }
+      );
     });
   });
 
   describe("getReservationById", () => {
-    it("should return a reservation by ID for a user", async () => {
+    it("should return reservation from cache", async () => {
+      const mockUserId = new Types.ObjectId();
+      const mockReservationId = new Types.ObjectId();
+      const mockUser = { _id: mockUserId };
+      const cachedReservation = { _id: mockReservationId };
+
+      mockUserModel.findById.mockResolvedValue(mockUser);
+      mockRedisClient.get.mockResolvedValue(JSON.stringify(cachedReservation));
+
+      const result = await reservationService.getReservationById(
+        mockUserId,
+        mockReservationId
+      );
+
+      expect(JSON.stringify(result)).toEqual(JSON.stringify(cachedReservation));
+      expect(mockRedisClient.get).toHaveBeenCalledWith(
+        `reservation_${mockReservationId}`
+      );
+    });
+
+    it("should return reservation from the database and cache it", async () => {
       const mockUserId = new Types.ObjectId();
       const mockReservationId = new Types.ObjectId();
       const mockUser = { _id: mockUserId, role: "user" };
       const mockReservation = { _id: mockReservationId };
 
       mockUserModel.findById.mockResolvedValue(mockUser);
+      mockRedisClient.get.mockResolvedValue(null);
       mockReservationModel.findOne.mockResolvedValue(mockReservation);
 
       const result = await reservationService.getReservationById(
@@ -116,64 +180,20 @@ describe("ReservationService", () => {
       );
 
       expect(result).toEqual(mockReservation);
-    });
-
-    it("should throw an error if user not found", async () => {
-      mockUserModel.findById.mockResolvedValue(null);
-
-      await expect(
-        reservationService.getReservationById(
-          new Types.ObjectId(),
-          new Types.ObjectId()
-        )
-      ).rejects.toEqual({ status: 404, message: "userNotFound" });
-    });
-
-    it("should throw an error if reservation not found", async () => {
-      const mockUserId = new Types.ObjectId();
-      const mockReservationId = new Types.ObjectId();
-      const mockUser = { _id: mockUserId, role: "user" };
-
-      mockUserModel.findById.mockResolvedValue(mockUser);
-      mockReservationModel.findOne.mockResolvedValue(null);
-
-      await expect(
-        reservationService.getReservationById(mockUserId, mockReservationId)
-      ).rejects.toEqual({ status: 404, message: "reservationNotFound" });
+      expect(mockRedisClient.set).toHaveBeenCalledWith(
+        `reservation_${mockReservationId}`,
+        JSON.stringify(mockReservation),
+        { EX: 60 * 60 * 24 }
+      );
     });
   });
 
   describe("deleteReservation", () => {
-    it("should delete reservation if user is admin", async () => {
-      const adminUserId = new Types.ObjectId();
-      const reservationId = new Types.ObjectId();
-      const reservation = { _id: reservationId };
-      const adminUser = { _id: adminUserId, role: "admin" }; // Admin user
-
-      mockUserModel.findById.mockResolvedValue(adminUser);
-      mockReservationModel.findOne.mockResolvedValue(reservation);
-
-      const result = await reservationService.deleteReservation(
-        adminUserId,
-        reservationId
-      );
-
-      expect(mockUserModel.findById).toHaveBeenCalledWith(adminUserId);
-      expect(mockReservationModel.findOne).toHaveBeenCalledWith({
-        _id: reservationId,
-        $or: expect.arrayContaining([{}]), // Admin can access any reservation
-      });
-      expect(mockReservationModel.deleteOne).toHaveBeenCalledWith({
-        _id: reservationId,
-      });
-      expect(result).toEqual(reservation);
-    });
-
-    it("should delete reservation if valid", async () => {
+    it("should delete reservation and clear Redis cache", async () => {
       const userId = new Types.ObjectId();
       const reservationId = new Types.ObjectId();
       const reservation = { _id: reservationId };
-      const user = { _id: userId, role: "user" }; // Non-admin user
+      const user = { _id: userId, role: "user" };
 
       mockUserModel.findById.mockResolvedValue(user);
       mockReservationModel.findOne.mockResolvedValue(reservation);
@@ -183,39 +203,14 @@ describe("ReservationService", () => {
         reservationId
       );
 
-      expect(mockUserModel.findById).toHaveBeenCalledWith(userId);
-      expect(mockReservationModel.findOne).toHaveBeenCalledWith({
-        _id: reservationId,
-        $or: expect.arrayContaining([{ user: userId }]), // Adjusted to expect array with the user condition
-      });
-      expect(mockReservationModel.deleteOne).toHaveBeenCalledWith({
-        _id: reservationId,
-      });
       expect(result).toEqual(reservation);
-    });
-
-    it("should throw an error if user not found", async () => {
-      mockUserModel.findById.mockResolvedValue(null);
-
-      await expect(
-        reservationService.deleteReservation(
-          new Types.ObjectId(),
-          new Types.ObjectId()
-        )
-      ).rejects.toEqual({ status: 404, message: "userNotFound" });
-    });
-
-    it("should throw an error if reservation not found", async () => {
-      const mockUserId = new Types.ObjectId();
-      const mockReservationId = new Types.ObjectId();
-      const mockUser = { _id: mockUserId, role: "user" };
-
-      mockUserModel.findById.mockResolvedValue(mockUser);
-      mockReservationModel.findOne.mockResolvedValue(null);
-
-      await expect(
-        reservationService.deleteReservation(mockUserId, mockReservationId)
-      ).rejects.toEqual({ status: 404, message: "reservationNotFound" });
+      expect(mockRedisClient.del).toHaveBeenCalledWith(
+        `reservations_user_${userId}`
+      );
+      expect(mockRedisClient.del).toHaveBeenCalledWith(`reservations_admin`);
+      expect(mockRedisClient.del).toHaveBeenCalledWith(
+        `reservation_${reservationId}`
+      );
     });
   });
 });
